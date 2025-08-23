@@ -46,7 +46,7 @@
 }
 
 /* Lane (simple straight style as before) */
-.lane.aftereve{
+.lane.aftereve {
   position: absolute;
   top: 41%;  /* align vertically between sender & receiver */
   left: 280px; /* match Alice's right edge */
@@ -355,11 +355,11 @@
   color: #374151;
   margin-left: 12px;
 }
-.circleouter.aftereve{
+.circleouter.aftereve {
   width: 150px;
   height: 150px;
   position: absolute;
-  right:105px;
+  right: 105px;
   top: 40px;
   border-radius: 50%;
   background: white;
@@ -368,7 +368,6 @@
 .circleouter{
   width: 150px;
   height: 150px;
-  
   position: absolute;
   right:210px;
   top: 40px;
@@ -444,3 +443,22 @@
   animation: rippleSpread 1s ease-out forwards 0.3s; /* delayed second wave */
 }
 
+.circle.noise::after,
+.circle.noise::before {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 0; height: 0;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, orange 0%, red 80%);
+  box-shadow: 0 0 20px rgba(220, 38, 38, 0.6);
+}
+
+.circle.noise::after {
+  animation: rippleSpread 1s ease-out forwards;
+}
+
+.circle.noise::before {
+  animation: rippleSpread 1s ease-out forwards 0.3s; /* delayed second wave */
+}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import "./styles.css";
-import { motion } from "framer-motion";
+import { motion, useAnimationControls } from "framer-motion";
 
 // Utility for gradient id
 const makeGradId = (role) => `grad-${role}-${Math.random()}`;
@@ -63,11 +63,13 @@ export default function AnimationDiv() {
   const [eveActive, setEveActive] = useState(false);
   const [noisePercent, setNoisePercent] = useState(10);
   const [status, setStatus] = useState(""); 
-  const [aftereve, setaftereve] = useState(""); 
+  const [afterEve, setAfterEve] = useState(""); 
 
   // Simulation data from backend
   const [obj, setObj] = useState([]);
   const current = obj[index] || {};
+  //Animation Controls
+  const controls = useAnimationControls();
 
   // Fetch simulation data from backend
   const fetchData = async () => {
@@ -120,18 +122,45 @@ export default function AnimationDiv() {
     }
   }, [index, isRunning, obj]);
 
-  // ✅ Animation events
-  useEffect(() => {
-    if (!isRunning || isPaused || obj.length === 0) return;
-    if(eveActive){
-       setaftereve("aftereve")
-    }
+
+// This single, unified useEffect manages the entire animation lifecycle for each bit.
+useEffect(() => {
+  // Helper function to clear any scheduled timers.
+  // This is crucial to prevent events from a previous cycle firing incorrectly.
+  const cleanupTimers = () => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  };
+
+  // --- PLAY STATE: When the animation should be running ---
+  if (isRunning && !isPaused) {
+    cleanupTimers(); // Always start a new cycle with a clean slate.
+    
+    // Ensure we have data for the current index.
+    if (!obj || !obj[index]) return;
     const data = obj[index];
+
     setCircleBit(data.alice.bit);
-    setCircleColor("rgb(119,56,236)");
+    setCircleColor("rgb(119, 56, 236)");
     setIsShocked(false);
     setStatus("");
-    // Eve flip
+
+    // 2. START THE PHYSICAL ANIMATION
+    // We use setTimeout with a 0ms delay. This pushes the animation command to the
+    // next browser event loop tick, giving React time to render the state changes from step 1.
+    const animationStartTimer = setTimeout(() => {
+      controls.start({
+        left: "95%",
+        transition: {
+          duration: duration / 1000,
+          ease: "linear",
+        },
+      });
+    }, 0);
+    timersRef.current.push(animationStartTimer);
+
+    // 3. SCHEDULE MID-ANIMATION EVENTS
+    // Eve's flip happens at 50% of the duration.
     timersRef.current.push(
       setTimeout(() => {
         if (data.is_eve_flipped) {
@@ -140,39 +169,33 @@ export default function AnimationDiv() {
         }
       }, duration * 0.5)
     );
-    //setting red color when mismatches
-    timersRef.current.push(
-      setTimeout(() => {
-        if (data.is_eve_flipped) {
-          setStatus("mismatch");
-        }
-      }, duration)
-    );
-     timersRef.current.push(
-      setTimeout(() => {
-        if (data.is_noise_flipped) {
-          setStatus("mismatch");
-        }
-      }, duration)
-    );
-     timersRef.current.push(
-      setTimeout(() => {
-        if (!data.is_eve_flipped && !data.is_noise_flipped) {
-          setStatus("match");
-        }
-      }, duration)
-    );
-    // Noise flip
+
+    // Noise flip happens at 80% of the duration.
     timersRef.current.push(
       setTimeout(() => {
         if (data.is_noise_flipped) {
           setCircleBit((prev) => (prev === 0 ? 1 : 0));
           setCircleColor("orange");
           setIsShocked(true);
-          setTimeout(() => setIsShocked(false), duration * 0.2);
+          setTimeout(() => setIsShocked(false), duration * 0.2); // Inner timer is okay
         }
       }, duration * 0.8)
     );
+
+    // 4. SCHEDULE END-OF-ANIMATION LOGIC
+    // This runs slightly after the animation finishes.
+    timersRef.current.push(
+      setTimeout(() => {
+        // Set final status based on what happened during the animation.
+        if (data.is_eve_flipped) {
+          setStatus("mismatch");
+        } else if (data.is_noise_flipped) {
+          setStatus("noise");
+        } else {
+          setStatus("match");
+        }
+      },duration)
+    )
 
     // Move to next bit or finish
     if (index < obj.length - 1) {
@@ -201,11 +224,26 @@ export default function AnimationDiv() {
       );
     }
 
-    return () => {
-      timersRef.current.forEach(clearTimeout);
-      timersRef.current = [];
-    };
-  }, [index, isRunning, isPaused, duration, obj, siftedKey, eveActive]);
+  } 
+  // --- PAUSE STATE ---
+  else if (isPaused) {
+    controls.stop(); // Freeze the animation in place.
+    cleanupTimers(); // Clear scheduled events so they don't fire while paused.
+  } 
+  // --- RESET / STOPPED STATE ---
+  else {
+    controls.start({ // Animate back to the starting position.
+      left: "0%",
+      transition: { duration: 0.5 },
+    });
+    cleanupTimers(); // Clear any lingering timers.
+  }
+
+  // This is React's main cleanup function. It will run when the component
+  // unmounts or before the effect runs again.
+  return cleanupTimers;
+
+}, [index, isRunning, isPaused, duration, obj, controls, siftedKey, eveActive]);
 
   // Controls
   const handleStart = async () => {
@@ -225,7 +263,7 @@ export default function AnimationDiv() {
       <div className="topBar">
         <h1 className="title">BB84 Protocol Simulation</h1>
         <div className="controls">
-          <button style={{ background: "#22c55e", color: "white" }} onClick={handleStart}>
+          <button style={{ background: "#1b9949ff", color: "white" }} onClick={handleStart}>
             Start
           </button>
           <button
@@ -255,8 +293,8 @@ export default function AnimationDiv() {
               type="number"
               value={duration}
               onChange={(e) => setDuration(Number(e.target.value))}
-              min="500"
-              step="100"
+              min="1"
+              step="1000"
             />
           </label>
           <label className="label">
@@ -275,15 +313,16 @@ export default function AnimationDiv() {
             className="eveActiveCheckbox"
               type="checkbox"
               checked={eveActive}
-              onChange={(e) => {setEveActive(e.target.checked) ;
-                setaftereve("aftereve");
-                }}
+              onChange={(e) => {
+                setEveActive(e.target.checked);
+                setAfterEve((afterEve === "")?"aftereve":"");
+              }}
               disabled={isRunning}  
-              cursor={isRunning ?"nor allowed":"pointer"}
+              style = {{cursor: (isRunning)?"not-allowed":"pointer"}}
             />
           </label>
           <label className="label">
-            Noise %: {noisePercent}%
+            Noise: 
             <input
             className="noiseInput"
               type="range"
@@ -292,30 +331,27 @@ export default function AnimationDiv() {
               min="1"
               max="100"
             />
+            {noisePercent}%
           </label>
         </div>
       </div>
 
       {/* Lane */}
       <div className="animationPanel">
-        <div className={`circleouter ${aftereve}`}>
+        <div className={`circleouter ${afterEve}`}>
           <div className={`circle ${status} `}>
             <div className="wave"></div>
-          </div>
-            
+          </div>   
         </div>
-        <div className={`lane ${aftereve}`}>
-         
+
+        <div className={`lane ${afterEve}`}>
+
           {circleBit !== null && (
             <motion.div
               className={`laneCircle ${isShocked ? "shock" : ""}`}
               key={index}
               initial={{ left: "0%" }}
-              animate={isRunning && !isPaused ? { left: "95%" } : {}}
-              transition={{
-                duration: duration / 1000,
-                ease: "linear",
-              }}
+              animate={controls}
               style={{
                 backgroundColor: isShocked ? "orange" : circleColor,
               }}
