@@ -1,0 +1,6 @@
+matplotlib
+qiskit
+qiskit[visualization]
+qiskit-ibm-runtime
+fastapi
+uvicorn
