@@ -205,8 +205,9 @@
 
 /* Outcomes */
 .outcome-keep { color: green; font-weight: bold; }
-.outcome-discard { color: gray; }
+.outcome-noise { color: orange; font-weight: bold;}
 .outcome-tampered { color: red; font-weight: bold; }
+.outcome-mismatch {color:#374151; font-weight: bold; }
 
 /* Sifted Key */
 .siftedContainer {
@@ -226,8 +227,9 @@
   font-size: 0.8rem;
 }
 
-.siftedBit.keep { background: #bbf7d0; color: #166534; }
-.siftedBit.error { background: #fecaca; color: #7f1d1d; }
+.siftedBit.correct { background: #bbf7d0; color: #166534; }
+.siftedBit.wrong-eve { background: #fecaca; color: #7f1d1d; }
+.siftedBit.wrong-noise { background: rgb(255, 211, 130); color: rgb(255, 115, 0); }
 
 .siftedEmpty {
   color: #94a3b8;

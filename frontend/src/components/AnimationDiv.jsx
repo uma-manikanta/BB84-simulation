@@ -62,8 +62,8 @@ export default function AnimationDiv() {
   const [keyLength, setKeyLength] = useState(10);
   const [eveActive, setEveActive] = useState(false);
   const [noisePercent, setNoisePercent] = useState(10);
-  const [status, setStatus] = useState(""); 
-  const [afterEve, setAfterEve] = useState(""); 
+  const [status, setStatus] = useState("");
+  const [afterEve, setAfterEve] = useState("");
 
   // Simulation data from backend
   const [obj, setObj] = useState([]);
@@ -85,165 +85,160 @@ export default function AnimationDiv() {
       setQber(data.qber);
       setSiftedKey([]);
       setCircleBit(details[0]?.alice?.bit ?? 0);
+      console.log(data);
+      setCorrectedKey(data.corrected_key);
     } catch (err) {
       console.error("Error fetching data:", err);
     }
   };
 
-  // ✅ Update logs + sifted key
+  // Update Logs + 
   useEffect(() => {
     if (!isRunning || obj.length === 0) return;
     const data = obj[index];
 
     const outcome =
-      data.alice.basis === data.bob.basis
-        ? data.alice.bit === data.bob.measured_bit
+      (data.alice.basis === data.bob.basis)
+        ? (data.alice.bit === data.bob.measured_bit
           ? "keep"
-          : "tampered"
-        : "discard";
+          : data.is_noise_flipped ? "Noise" : "Eve Flipped")
+        : "Bases Mismatched";
 
     let logRow = {
       aliceBit: data.alice.bit,
       aliceBase: data.alice.basis,
       bobBase: data.bob.basis,
+      eveBase: data.after_eve.basis,
       bobBit: data.bob.measured_bit,
       outcome,
     };
     setLogs((prev) => [logRow, ...prev]);
 
-    if (outcome === "keep" || outcome === "tampered") {
+    if (outcome !== "Bases Mismatched") {
       setSiftedKey((prev) => [
         ...prev,
         {
           bit: data.bob.measured_bit,
-          correct: data.alice.bit === data.bob.measured_bit,
+          correct: (data.alice.bit === data.bob.measured_bit) ? "correct" : (data.is_eve_flipped) ? "wrong-eve" : "wrong-noise", //changed
         },
       ]);
     }
   }, [index, isRunning, obj]);
 
 
-// This single, unified useEffect manages the entire animation lifecycle for each bit.
-useEffect(() => {
-  // Helper function to clear any scheduled timers.
-  // This is crucial to prevent events from a previous cycle firing incorrectly.
-  const cleanupTimers = () => {
-    timersRef.current.forEach(clearTimeout);
-    timersRef.current = [];
-  };
+  // This single, unified useEffect manages the entire animation lifecycle for each bit.
+  useEffect(() => {
+    // Helper function to clear any scheduled timers.
+    // This is crucial to prevent events from a previous cycle firing incorrectly.
+    const cleanupTimers = () => {
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current = [];
+    };
 
-  // --- PLAY STATE: When the animation should be running ---
-  if (isRunning && !isPaused) {
-    cleanupTimers(); // Always start a new cycle with a clean slate.
-    
-    // Ensure we have data for the current index.
-    if (!obj || !obj[index]) return;
-    const data = obj[index];
+    // --- PLAY STATE: When the animation should be running ---
+    if (isRunning && !isPaused) {
+      cleanupTimers(); // Always start a new cycle with a clean slate.
 
-    setCircleBit(data.alice.bit);
-    setCircleColor("rgb(119, 56, 236)");
-    setIsShocked(false);
-    setStatus("");
+      // Ensure we have data for the current index.
+      if (!obj || !obj[index]) return;
+      const data = obj[index];
 
-    // 2. START THE PHYSICAL ANIMATION
-    // We use setTimeout with a 0ms delay. This pushes the animation command to the
-    // next browser event loop tick, giving React time to render the state changes from step 1.
-    const animationStartTimer = setTimeout(() => {
-      controls.start({
-        left: "95%",
-        transition: {
-          duration: duration / 1000,
-          ease: "linear",
-        },
-      });
-    }, 0);
-    timersRef.current.push(animationStartTimer);
+      setCircleBit(data.alice.bit);
+      setCircleColor("rgb(119, 56, 236)");
+      setIsShocked(false);
+      setStatus("");
 
-    // 3. SCHEDULE MID-ANIMATION EVENTS
-    // Eve's flip happens at 50% of the duration.
-    timersRef.current.push(
-      setTimeout(() => {
-        if (data.is_eve_flipped) {
-          setCircleBit(data.after_eve.bit);
-          setCircleColor("red");
-        }
-      }, duration * 0.5)
-    );
+      // 2. START THE PHYSICAL ANIMATION
+      // We use setTimeout with a 0ms delay. This pushes the animation command to the
+      // next browser event loop tick, giving React time to render the state changes from step 1.
+      const animationStartTimer = setTimeout(() => {
+        controls.start({
+          left: "95%",
+          transition: {
+            duration: duration / 1000,
+            ease: "linear",
+          },
+        });
+      }, 0);
+      timersRef.current.push(animationStartTimer);
 
-    // Noise flip happens at 80% of the duration.
-    timersRef.current.push(
-      setTimeout(() => {
-        if (data.is_noise_flipped) {
-          setCircleBit((prev) => (prev === 0 ? 1 : 0));
-          setCircleColor("orange");
-          setIsShocked(true);
-          setTimeout(() => setIsShocked(false), duration * 0.2); // Inner timer is okay
-        }
-      }, duration * 0.8)
-    );
-
-    // 4. SCHEDULE END-OF-ANIMATION LOGIC
-    // This runs slightly after the animation finishes.
-    timersRef.current.push(
-      setTimeout(() => {
-        // Set final status based on what happened during the animation.
-        if (data.is_eve_flipped) {
-          setStatus("mismatch");
-        } else if (data.is_noise_flipped) {
-          setStatus("noise");
-        } else {
-          setStatus("match");
-        }
-      },duration)
-    )
-
-    // Move to next bit or finish
-    if (index < obj.length - 1) {
+      // 3. SCHEDULE MID-ANIMATION EVENTS
+      // Eve's flip happens at 50% of the duration.
       timersRef.current.push(
         setTimeout(() => {
-          setIndex((prev) => prev + 1);
-        }, duration + 1000)
-      );
-    } else {
-      timersRef.current.push(
-        setTimeout(() => {
-          setIsRunning(false);
-          let total = siftedKey.length;
-          let mismatches = siftedKey.filter((b) => !b.correct).length;
-          setQber(((mismatches / total) * 100).toFixed(2));
-
-          // build corrected key only if Eve is inactive
-          if (!eveActive && total > 0) {
-            setCorrectedKey(
-              siftedKey.map((b) =>
-                b.correct ? b.bit : (b.bit ^ 1) // flip wrong bits
-              )
-            );
+          if (data.is_eve_flipped) {
+            setCircleBit(data.after_eve.bit);
+            setCircleColor("red");
           }
-        }, duration + 400)
+        }, duration * 0.5)
       );
+
+      // Noise flip happens at 80% of the duration.
+      timersRef.current.push(
+        setTimeout(() => {
+          if (data.is_noise_flipped) {
+            setCircleBit((prev) => (prev === 0 ? 1 : 0));
+            setCircleColor("orange");
+            setIsShocked(true);
+            setTimeout(() => setIsShocked(false), duration * 0.2); // Inner timer is okay
+          }
+        }, duration * 0.8)
+      );
+
+      // 4. SCHEDULE END-OF-ANIMATION LOGIC
+      // This runs slightly after the animation finishes.
+      timersRef.current.push(
+        setTimeout(() => {
+          // Set final status based on what happened during the animation.
+          if (data.is_eve_flipped) {
+            setStatus("mismatch");
+          } else if (data.is_noise_flipped) {
+            setStatus("noise");
+          } else {
+            setStatus("match");
+          }
+        }, duration)
+      )
+
+      // Move to next bit or finish
+      if (index < obj.length - 1) {
+        timersRef.current.push(
+          setTimeout(() => {
+            setIndex((prev) => prev + 1);
+          }, duration + 1000)
+        );
+      } else {
+        timersRef.current.push(
+          setTimeout(() => {
+            setIsRunning(false);
+            let total = siftedKey.length;
+            let mismatches = siftedKey.filter((b) => !b.correct).length;
+            setQber(((mismatches / total) * 100).toFixed(2));
+
+          }, duration + 400)
+        );
+      }
+
+    }
+    // --- PAUSE STATE ---
+    else if (isPaused) {
+      controls.stop(); // Freeze the animation in place.
+      cleanupTimers(); // Clear scheduled events so they don't fire while paused.
+    }
+    // --- RESET / STOPPED STATE ---
+    else {
+      controls.start({ // Animate back to the starting position.
+        left: "0%",
+        transition: { duration: 0.5 },
+      });
+      cleanupTimers(); // Clear any lingering timers.
     }
 
-  } 
-  // --- PAUSE STATE ---
-  else if (isPaused) {
-    controls.stop(); // Freeze the animation in place.
-    cleanupTimers(); // Clear scheduled events so they don't fire while paused.
-  } 
-  // --- RESET / STOPPED STATE ---
-  else {
-    controls.start({ // Animate back to the starting position.
-      left: "0%",
-      transition: { duration: 0.5 },
-    });
-    cleanupTimers(); // Clear any lingering timers.
-  }
+    // This is React's main cleanup function. It will run when the component
+    // unmounts or before the effect runs again.
+    return cleanupTimers;
 
-  // This is React's main cleanup function. It will run when the component
-  // unmounts or before the effect runs again.
-  return cleanupTimers;
-
-}, [index, isRunning, isPaused, duration, obj, controls, siftedKey, eveActive]);
+  }, [index, isRunning, isPaused, duration, obj, controls, siftedKey, eveActive]);
 
   // Controls
   const handleStart = async () => {
@@ -289,7 +284,7 @@ useEffect(() => {
           <label className="label">
             Duration (ms):
             <input
-            className="durationInput"
+              className="durationInput"
               type="number"
               value={duration}
               onChange={(e) => setDuration(Number(e.target.value))}
@@ -300,7 +295,7 @@ useEffect(() => {
           <label className="label">
             Key length:
             <input
-            className="keylengthInput"
+              className="keylengthInput"
               type="number"
               value={keyLength}
               onChange={(e) => setKeyLength(Number(e.target.value))}
@@ -310,21 +305,21 @@ useEffect(() => {
           <label className="label">
             Eve active:
             <input
-            className="eveActiveCheckbox"
+              className="eveActiveCheckbox"
               type="checkbox"
               checked={eveActive}
               onChange={(e) => {
                 setEveActive(e.target.checked);
-                setAfterEve((afterEve === "")?"aftereve":"");
+                setAfterEve((afterEve === "") ? "aftereve" : "");
               }}
-              disabled={isRunning}  
-              style = {{cursor: (isRunning)?"not-allowed":"pointer"}}
+              disabled={isRunning}
+              style={{ cursor: (isRunning) ? "not-allowed" : "pointer" }}
             />
           </label>
           <label className="label">
-            Noise: 
+            Noise:
             <input
-            className="noiseInput"
+              className="noiseInput"
               type="range"
               value={noisePercent}
               onChange={(e) => setNoisePercent(Number(e.target.value))}
@@ -341,7 +336,7 @@ useEffect(() => {
         <div className={`circleouter ${afterEve}`}>
           <div className={`circle ${status} `}>
             <div className="wave"></div>
-          </div>   
+          </div>
         </div>
 
         <div className={`lane ${afterEve}`}>
@@ -366,24 +361,24 @@ useEffect(() => {
           <div className="nodeGroup1">
             <Computer role="Sender" />
             <div className="basisLabel">
-              Basis: {current?.alice?.basis ?? "–"}
+              Basis: {current?.alice?.basis ?? "?"}
             </div>
           </div>
-          {eveActive &&(
+          {eveActive && (
             <div className="nodeGroup2">
-            <Computer role="Eve" color="red" />
-            <div className="basisLabel">
-              Basis: {current?.after_eve?.basis ?? "–"}
+              <Computer role="Eve" color="red" />
+              <div className="basisLabel">
+                Basis: {current?.after_eve?.basis ?? "?"}
+              </div>
             </div>
-          </div>
           )}
-          
+
           <div className="nodeGroup3">
-            
+
             <Computer role="Receiver" />
             <div className="basisLabel">
-              Basis: {current?.bob?.basis ?? "–"}
-            
+              Basis: {current?.bob?.basis ?? "?"}
+
             </div>
           </div>
         </div>
@@ -406,6 +401,7 @@ useEffect(() => {
                   <th>#</th>
                   <th>Sender bit</th>
                   <th>Sender basis</th>
+                  {eveActive && (<th>Eve Basis</th>)}
                   <th>Receiver basis</th>
                   <th>Receiver bit</th>
                   <th>Outcome</th>
@@ -413,20 +409,23 @@ useEffect(() => {
               </thead>
               <tbody>
                 {logs.map((row, i) => (
-                  <tr key={i}>
-                    <td>{i + 1}</td>
+                  <tr key={logs.length - i}>
+                    <td>{logs.length - i}</td>
                     <td><b>{row.aliceBit}</b></td>
                     <td>{row.aliceBase}</td>
+                    {eveActive && (<td>{row.eveBase}</td>)}
                     <td>{row.bobBase}</td>
                     <td>{row.bobBit ?? "–"}</td>
                     <td>
                       {row.outcome === "keep" ? (
                         <span className="outcome-keep">keep</span>
-                      ) : row.outcome === "discard" ? (
-                        <span className="outcome-discard">discard</span>
-                      ) : (
-                        <span className="outcome-tampered">tampered</span>
-                      )}
+                      ) : row.outcome === "Noise" ? (
+                        <span className="outcome-noise">Noise</span>
+                      ) : row.outcome === "Eve Flipped" ? (
+                        <span className="outcome-tampered">Eve Flipped</span>
+                      ) :
+                        <span className="outcome-mismatch">Bases Mismatched</span>
+                      }
                     </td>
                   </tr>
                 ))}
@@ -450,7 +449,7 @@ useEffect(() => {
               siftedKey.map((b, i) => (
                 <div
                   key={i}
-                  className={`siftedBit ${b.correct ? "keep" : "error"}`}
+                  className={`siftedBit ${b.correct}`}
                 >
                   {b.bit}
                 </div>
@@ -459,7 +458,7 @@ useEffect(() => {
           </div>
 
           {/* Corrected key */}
-          {!isRunning && correctedKey && !eveActive && qber > 0 && (
+          {!isRunning && correctedKey && !eveActive && (
             <>
               <button
                 onClick={() => setShowCorrected(true)}
@@ -468,9 +467,24 @@ useEffect(() => {
                 Show Corrected Key
               </button>
               {showCorrected && (
-                <div className="correctedKeyDisplay">
-                  Corrected Key: {correctedKey.join("")}
+                <div>
+                  <br></br>
+                  <div className="siftedContainer">
+                      {correctedKey.map(b => 
+                        <div
+                          key={b}
+                          className={`siftedBit correct`}
+                        >
+                          {b}
+                        </div>
+                      )
+                      }
+                  </div>
+                  <div className="correctedKeyDisplay">
+                    Corrected Key: {correctedKey.join("")}
+                  </div>
                 </div>
+
               )}
             </>
           )}
