@@ -226,7 +226,7 @@ export default function AnimationDiv() {
   const fetchData = async () => {
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/?KEY_LENGTH=${keyLength}&is_eve_active=${eveActive}&noise_percent=${noisePercent}`
+        `https://bb84-simulation-production.up.railway.app/?KEY_LENGTH=${keyLength}&is_eve_active=${eveActive}&noise_percent=${noisePercent}`
       );
       const raw = await res.json();
       const data = JSON.parse(raw); // backend double-encodes JSON
