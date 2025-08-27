@@ -278,8 +278,8 @@ export default function AnimationDiv() {
         ? data.alice.bit === data.bob.measured_bit
           ? "keep"
           : data.is_noise_flipped
-          ? "Noise"
-          : "Eve Flipped"
+            ? "Noise"
+            : "Eve Flipped"
         : "Bases Mismatched";
 
     const logRow = {
@@ -302,8 +302,8 @@ export default function AnimationDiv() {
             data.alice.bit === data.bob.measured_bit
               ? "correct"
               : data.is_eve_flipped
-              ? "wrong-eve"
-              : "wrong-noise",
+                ? "wrong-eve"
+                : "wrong-noise",
         },
       ]);
     }
@@ -380,13 +380,20 @@ export default function AnimationDiv() {
         shockEndAtRef.current = null;
 
         // set circle visuals to alice's starting state
+        // console.log("Main RAF LOOP: LINE 384 (PREV)" + circleBit);
         setCircleBit(data.alice.bit);
+        // console.log("Main RAF LOOP: LINE 384 (AFTE)" + circleBit);
+        // console.log("Main RAF LOOP: LINE 384 (PREV)" + circleBasis);
         setCircleBasis(data.alice.basis);
-        setCircleColor("rgb(119,56,236)");
+        // console.log("Main RAF LOOP: LINE 384 (AFTE)" + circleBasis);
+        // setCircleColor("rgb(119,56,236)");
+        
         setIsShocked(false);
       }
 
       if (phaseRef.current === "animating") {
+        setCircleBit(data.alice.bit);
+        setCircleBasis(data.alice.basis);
         if (startTimeRef.current === 0)
           startTimeRef.current = now - elapsedRef.current;
         const elapsed = now - startTimeRef.current;
@@ -529,8 +536,8 @@ export default function AnimationDiv() {
           ? data.alice.bit === data.bob.measured_bit
             ? "keep"
             : data.is_noise_flipped
-            ? "Noise"
-            : "Eve Flipped"
+              ? "Noise"
+              : "Eve Flipped"
           : "Bases Mismatched";
 
       logsArr.unshift({
@@ -550,8 +557,8 @@ export default function AnimationDiv() {
             data.alice.bit === data.bob.measured_bit
               ? "correct"
               : data.is_eve_flipped
-              ? "wrong-eve"
-              : "wrong-noise",
+                ? "wrong-eve"
+                : "wrong-noise",
         });
       }
     }
@@ -744,6 +751,7 @@ export default function AnimationDiv() {
                 backgroundColor: isShocked ? "orange" : circleColor,
               }}
             >
+              {/* {console.log(circleBasis, circleBit)} */}
               {circleBasis == "Z" ? (
                 circleBit == 0 ? (
                   <img
@@ -883,7 +891,7 @@ export default function AnimationDiv() {
                     </td>
                     <td>{row.aliceBase}</td>
                     {eveActive && <td>{row.eveBase}</td>}
-                    {console.log(row.eveBit)}
+                    {/* {console.log(row.eveBit)} */}
                     {eveActive && (
                       <td
                         style={{
@@ -938,12 +946,12 @@ export default function AnimationDiv() {
           {/* Corrected key */}
           {!isRunning && correctedKey && !eveActive && (
             <>
-              <button
+              {(qber !== "0.00") && <button
                 onClick={() => setShowCorrected(true)}
                 className="correctBtn"
               >
                 Show Corrected Key
-              </button>
+              </button>}
               {showCorrected && (
                 <div>
                   <br />
