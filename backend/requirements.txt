@@ -4,3 +4,4 @@ qiskit[visualization]
 qiskit-ibm-runtime
 fastapi
 uvicorn
+qiskit_aer
