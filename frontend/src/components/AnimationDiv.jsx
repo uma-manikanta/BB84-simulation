@@ -2,11 +2,17 @@
 import React, { useState, useEffect, useRef } from "react";
 import "./styles.css";
 import { motion } from "framer-motion";
+import plusSign from "../images/plus-sign.png";
+import cancelSign from "../images/cancel.png";
+import horizontal from "../images/0.png";
+import vertical from "../images/90.png";
+import zero from "../images/45.png";
+import one from "../images/135.png";
 
 // Utility for gradient id
 const makeGradId = (role) => `grad-${role}-${Math.random()}`;
 
-const Computer = ({ role = "Sender", color = "default" }) => {
+const Computer = ({ role = "Sender", color = "default", current_basis }) => {
   const gradId = makeGradId(role);
   let stop1 = "#cbd5e1";
   let stop2 = "#94a3b8";
@@ -14,8 +20,10 @@ const Computer = ({ role = "Sender", color = "default" }) => {
     stop1 = "#f87171";
     stop2 = "#dc2626";
   }
+
   return (
     <div className="computerWrapper">
+      {/* SVG computer */}
       <svg width="90" height="70" viewBox="0 0 160 120" className="drop-shadow">
         <defs>
           <linearGradient id={gradId} x1="0" x2="1" y1="0" y2="1">
@@ -37,6 +45,28 @@ const Computer = ({ role = "Sender", color = "default" }) => {
         <rect x="55" y="100" width="50" height="8" rx="2" fill="#0f172a" />
         <rect x="35" y="108" width="90" height="6" rx="3" fill="#1f2937" />
       </svg>
+
+      {/* Overlay icon inside screen */}
+      <div
+        style={{
+          position: "absolute",
+          top: "10px",
+          left: "25px",
+          width: "40px",
+          height: "40px",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        {current_basis
+          ? (current_basis === "Z"
+            ? <img src={plusSign} alt="plus sign" width="30" height="30" />
+            : <img src={cancelSign} alt="cancel sign" width="30" height="30" />)
+          : "?"}
+      </div>
+
+      {/* Role label */}
       <span className="roleLabel">{role}</span>
     </div>
   );
@@ -54,6 +84,7 @@ export default function AnimationDiv() {
 
   const [duration, setDuration] = useState(2400); // ms
   const [circleBit, setCircleBit] = useState(null);
+  const [circleBasis, setCircleBasis] = useState(null);
   const [circleColor, setCircleColor] = useState("rgb(119,56,236)");
   const [isShocked, setIsShocked] = useState(false);
 
@@ -99,6 +130,7 @@ export default function AnimationDiv() {
       setQber(data.qber);
       setSiftedKey([]);
       setCircleBit(details[0]?.alice?.bit ?? 0);
+      setCircleBasis(details[0]?.alice?.basis ?? '+');
       setCorrectedKey(data.corrected_key);
 
       // Reset animation refs completely
@@ -126,8 +158,8 @@ export default function AnimationDiv() {
         ? data.alice.bit === data.bob.measured_bit
           ? "keep"
           : data.is_noise_flipped
-          ? "Noise"
-          : "Eve Flipped"
+            ? "Noise"
+            : "Eve Flipped"
         : "Bases Mismatched";
 
     const logRow = {
@@ -149,8 +181,8 @@ export default function AnimationDiv() {
             data.alice.bit === data.bob.measured_bit
               ? "correct"
               : data.is_eve_flipped
-              ? "wrong-eve"
-              : "wrong-noise",
+                ? "wrong-eve"
+                : "wrong-noise",
         },
       ]);
     }
@@ -171,6 +203,7 @@ export default function AnimationDiv() {
     // If starting a brand-new bit (not resuming mid-way)
     if (elapsedRef.current === 0) {
       setCircleBit(data.alice.bit);
+      setCircleBasis(data.alice.basis);
       setCircleColor("rgb(119, 56, 236)");
       setIsShocked(false);
       setStatus("");
@@ -204,6 +237,7 @@ export default function AnimationDiv() {
         eveFiredRef.current = true;
         if (data.is_eve_flipped) {
           setCircleBit(data.after_eve.bit);
+          setCircleBasis(data.after_eve.basis);
           setCircleColor("red");
         }
       }
@@ -213,6 +247,7 @@ export default function AnimationDiv() {
         noiseFiredRef.current = true;
         if (data.is_noise_flipped) {
           setCircleBit((prev) => (prev === 0 ? 1 : 0));
+          //No need to change Basis as noise won't flip Basis 
           setCircleColor("orange");
           setIsShocked(true);
           shockEndAtRef.current = elapsed + duration * 0.2; // end of shock
@@ -234,33 +269,33 @@ export default function AnimationDiv() {
 
         // Compute QBER if this was the last bit
         if (!statusFiredRef.current && elapsed >= duration) {
-  statusFiredRef.current = true;
+          statusFiredRef.current = true;
 
-  if (data.is_eve_flipped) setStatus("mismatch");
-  else if (data.is_noise_flipped) setStatus("noise");
-  else setStatus("match");
+          if (data.is_eve_flipped) setStatus("mismatch");
+          else if (data.is_noise_flipped) setStatus("noise");
+          else setStatus("match");
 
-  if (index >= obj.length - 1) {
-    // final QBER calc...
-    const total = siftedKey.length;
-    const mismatches = siftedKey.filter((b) => b.correct !== "correct").length;
-    setQber(total ? ((mismatches / total) * 100).toFixed(2) : "0.00");
-    setIsRunning(false);
-    cancelAnimationFrame(rafRef.current);
-    return;
-  }
+          if (index >= obj.length - 1) {
+            // final QBER calc...
+            const total = siftedKey.length;
+            const mismatches = siftedKey.filter((b) => b.correct !== "correct").length;
+            setQber(total ? ((mismatches / total) * 100).toFixed(2) : "0.00");
+            setIsRunning(false);
+            cancelAnimationFrame(rafRef.current);
+            return;
+          }
         }
-  // ✅ Wait 1000ms for ripple animation before moving to next bit
-  setTimeout(() => {
-    elapsedRef.current = 0;
-    leftPctRef.current = 0;
-    setLeftPct(0);
-    setIndex((prev) => prev + 1);
-  }, 1000);
+        // ✅ Wait 1000ms for ripple animation before moving to next bit
+        setTimeout(() => {
+          elapsedRef.current = 0;
+          leftPctRef.current = 0;
+          setLeftPct(0);
+          setIndex((prev) => prev + 1);
+        }, 1000);
 
-  cancelAnimationFrame(rafRef.current);
-  return;
-}
+        cancelAnimationFrame(rafRef.current);
+        return;
+      }
 
 
       rafRef.current = requestAnimationFrame(tick);
@@ -389,7 +424,7 @@ export default function AnimationDiv() {
         <div className={`lane ${afterEve}`}>
           {circleBit !== null && (
             <motion.div
-             ref={circleRef}
+              ref={circleRef}
               className={`laneCircle ${isShocked ? "shock" : ""}`}
               key={index}
               style={{
@@ -397,7 +432,17 @@ export default function AnimationDiv() {
                 backgroundColor: isShocked ? "orange" : circleColor,
               }}
             >
-              {circleBit}
+              {circleBasis == 'Z'
+                ? (circleBit == 0
+                  ? <img src={horizontal} alt="plus sign" width="40" height="40" />
+                  : <img src={vertical} alt="plus sign" width="40" height="40" />
+                )
+                : (circleBit == 0
+                  ? <img src={zero} alt="plus sign" width="40" height="40" />
+                  : <img src={one} alt="plus sign" width="40" height="40" />
+                )
+              }
+
             </motion.div>
           )}
         </div>
@@ -405,24 +450,39 @@ export default function AnimationDiv() {
         {/* Nodes */}
         <div className="nodePanel">
           <div className="nodeGroup1">
-            <Computer role="Sender" />
-            <div className="basisLabel">
-              Basis: {current?.alice?.basis ?? "?"}
+            <Computer role="Sender" current_basis={current?.alice?.basis} />
+            <div className="basisLabel" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span>Basis:</span>
+              {current?.alice?.basis
+                ? (current.alice.basis === "Z"
+                  ? <img src={plusSign} alt="plus sign" width="40" height="40" />
+                  : <img src={cancelSign} alt="cancel sign" width="40" height="40" />)
+                : "?"}
             </div>
           </div>
           {eveActive && (
             <div className="nodeGroup2">
-              <Computer role="Eve" color="red" />
-              <div className="basisLabel">
-                Basis: {current?.after_eve?.basis ?? "?"}
-              </div>
+              <Computer role="Eve" color="red" current_basis = {current?.after_eve?.basis} />
+              <div className="basisLabel" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span>Basis:</span>
+              {current?.after_eve?.basis
+                ? (current.after_eve.basis === "Z"
+                  ? <img src={plusSign} alt="plus sign" width="40" height="40" />
+                  : <img src={cancelSign} alt="cancel sign" width="40" height="40" />)
+                : "?"}
+            </div>
             </div>
           )}
 
           <div className="nodeGroup3">
-            <Computer role="Receiver" />
-            <div className="basisLabel">
-              Basis: {current?.bob?.basis ?? "?"}
+            <Computer role="Receiver" current_basis={current?.bob?.basis} />
+            <div className="basisLabel" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span>Basis:</span>
+              {current?.bob?.basis
+                ? (current.bob.basis === "Z"
+                  ? <img src={plusSign} alt="plus sign" width="40" height="40" />
+                  : <img src={cancelSign} alt="cancel sign" width="40" height="40" />)
+                : "?"}
             </div>
           </div>
         </div>
