@@ -392,10 +392,12 @@ export default function AnimationDiv() {
       }
 
       if (phaseRef.current === "animating") {
-        setCircleBit(data.alice.bit);
-        setCircleBasis(data.alice.basis);
-        if (startTimeRef.current === 0)
+        if (startTimeRef.current === 0) {
+          setCircleBit(data.alice.bit);
+          setCircleBasis(data.alice.basis);
           startTimeRef.current = now - elapsedRef.current;
+        }
+          
         const elapsed = now - startTimeRef.current;
         elapsedRef.current = elapsed;
 
