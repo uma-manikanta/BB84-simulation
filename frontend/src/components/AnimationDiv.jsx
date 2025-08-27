@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useRef } from "react";
 import "./styles.css";
-import { motion, useAnimationControls } from "framer-motion";
+import { motion } from "framer-motion";
 
 // Utility for gradient id
 const makeGradId = (role) => `grad-${role}-${Math.random()}`;
@@ -41,6 +42,8 @@ const Computer = ({ role = "Sender", color = "default" }) => {
   );
 };
 
+
+
 export default function AnimationDiv() {
   const [index, setIndex] = useState(0);
   const [logs, setLogs] = useState([]);
@@ -49,14 +52,13 @@ export default function AnimationDiv() {
   const [correctedKey, setCorrectedKey] = useState(null);
   const [showCorrected, setShowCorrected] = useState(false);
 
-  const [duration, setDuration] = useState(2400);
+  const [duration, setDuration] = useState(2400); // ms
   const [circleBit, setCircleBit] = useState(null);
   const [circleColor, setCircleColor] = useState("rgb(119,56,236)");
   const [isShocked, setIsShocked] = useState(false);
 
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const timersRef = useRef([]);
 
   // Parameters for backend
   const [keyLength, setKeyLength] = useState(10);
@@ -68,47 +70,71 @@ export default function AnimationDiv() {
   // Simulation data from backend
   const [obj, setObj] = useState([]);
   const current = obj[index] || {};
-  //Animation Controls
-  const controls = useAnimationControls();
 
-  // Fetch simulation data from backend
+  // ===== RAF-based animation state (robust pause/resume) =====
+  const rafRef = useRef(null);
+  const startTimeRef = useRef(0); // performance.now() at (re)start
+  const elapsedRef = useRef(0); // ms already elapsed within current bit
+  const leftPctRef = useRef(0); // left % (0..95)
+  const [leftPct, setLeftPct] = useState(0);
+
+  const eveFiredRef = useRef(false);
+  const noiseFiredRef = useRef(false);
+  const statusFiredRef = useRef(false);
+  const shockEndAtRef = useRef(null); // ms offset after noise to end shock
+  const circleRef = useRef(null);
+
+
+  // ===== Backend fetch =====
   const fetchData = async () => {
     try {
       const res = await fetch(
         `http://127.0.0.1:8000/?KEY_LENGTH=${keyLength}&is_eve_active=${eveActive}&noise_percent=${noisePercent}`
       );
       const raw = await res.json();
-      const data = JSON.parse(raw); // backend is double-encoding JSON
+      const data = JSON.parse(raw); // backend double-encodes JSON
       const details = Object.values(data.log_details);
+
       setObj(details);
-      console.log(details);
       setQber(data.qber);
       setSiftedKey([]);
       setCircleBit(details[0]?.alice?.bit ?? 0);
-      console.log(data);
       setCorrectedKey(data.corrected_key);
+
+      // Reset animation refs completely
+      cancelAnimationFrame(rafRef.current);
+      elapsedRef.current = 0;
+      leftPctRef.current = 0;
+      setLeftPct(0);
+      eveFiredRef.current = false;
+      noiseFiredRef.current = false;
+      statusFiredRef.current = false;
+      shockEndAtRef.current = null;
     } catch (err) {
       console.error("Error fetching data:", err);
     }
   };
 
-  // Update Logs + 
+  // ===== Build log + sifted key when a new index starts =====
   useEffect(() => {
     if (!isRunning || obj.length === 0) return;
-    const data = obj[index];
+    if (!obj[index]) return;
 
+    const data = obj[index];
     const outcome =
-      (data.alice.basis === data.bob.basis)
-        ? (data.alice.bit === data.bob.measured_bit
+      data.alice.basis === data.bob.basis
+        ? data.alice.bit === data.bob.measured_bit
           ? "keep"
-          : data.is_noise_flipped ? "Noise" : "Eve Flipped")
+          : data.is_noise_flipped
+          ? "Noise"
+          : "Eve Flipped"
         : "Bases Mismatched";
 
-    let logRow = {
+    const logRow = {
       aliceBit: data.alice.bit,
       aliceBase: data.alice.basis,
       bobBase: data.bob.basis,
-      eveBase: data.after_eve.basis,
+      eveBase: data.after_eve?.basis,
       bobBit: data.bob.measured_bit,
       outcome,
     };
@@ -119,134 +145,150 @@ export default function AnimationDiv() {
         ...prev,
         {
           bit: data.bob.measured_bit,
-          correct: (data.alice.bit === data.bob.measured_bit) ? "correct" : (data.is_eve_flipped) ? "wrong-eve" : "wrong-noise", //changed
+          correct:
+            data.alice.bit === data.bob.measured_bit
+              ? "correct"
+              : data.is_eve_flipped
+              ? "wrong-eve"
+              : "wrong-noise",
         },
       ]);
     }
   }, [index, isRunning, obj]);
 
-
-  // This single, unified useEffect manages the entire animation lifecycle for each bit.
+  // ===== Main RAF loop per bit =====
   useEffect(() => {
-    // Helper function to clear any scheduled timers.
-    // This is crucial to prevent events from a previous cycle firing incorrectly.
-    const cleanupTimers = () => {
-      timersRef.current.forEach(clearTimeout);
-      timersRef.current = [];
-    };
+    if (!isRunning || isPaused) {
+      // Paused: just stop the RAF; keep elapsedRef & leftPct so we can resume.
+      cancelAnimationFrame(rafRef.current);
+      return;
+    }
 
-    // --- PLAY STATE: When the animation should be running ---
-    if (isRunning && !isPaused) {
-      cleanupTimers(); // Always start a new cycle with a clean slate.
+    if (!obj || !obj[index]) return;
 
-      // Ensure we have data for the current index.
-      if (!obj || !obj[index]) return;
-      const data = obj[index];
+    const data = obj[index];
 
+    // If starting a brand-new bit (not resuming mid-way)
+    if (elapsedRef.current === 0) {
       setCircleBit(data.alice.bit);
       setCircleColor("rgb(119, 56, 236)");
       setIsShocked(false);
       setStatus("");
+      setLeftPct(0);
+      leftPctRef.current = 0;
+      eveFiredRef.current = false;
+      noiseFiredRef.current = false;
+      statusFiredRef.current = false;
+      shockEndAtRef.current = null;
+    }
 
-      // 2. START THE PHYSICAL ANIMATION
-      // We use setTimeout with a 0ms delay. This pushes the animation command to the
-      // next browser event loop tick, giving React time to render the state changes from step 1.
-      const animationStartTimer = setTimeout(() => {
-        controls.start({
-          left: "95%",
-          transition: {
-            duration: duration / 1000,
-            ease: "linear",
-          },
-        });
-      }, 0);
-      timersRef.current.push(animationStartTimer);
+    // Start / resume clock
+    startTimeRef.current = performance.now() - elapsedRef.current;
 
-      // 3. SCHEDULE MID-ANIMATION EVENTS
-      // Eve's flip happens at 50% of the duration.
-      timersRef.current.push(
-        setTimeout(() => {
-          if (data.is_eve_flipped) {
-            setCircleBit(data.after_eve.bit);
-            setCircleColor("red");
-          }
-        }, duration * 0.5)
-      );
+    const tick = (now) => {
+      const elapsed = now - startTimeRef.current; // ms
+      elapsedRef.current = elapsed;
 
-      // Noise flip happens at 80% of the duration.
-      timersRef.current.push(
-        setTimeout(() => {
-          if (data.is_noise_flipped) {
-            setCircleBit((prev) => (prev === 0 ? 1 : 0));
-            setCircleColor("orange");
-            setIsShocked(true);
-            setTimeout(() => setIsShocked(false), duration * 0.2); // Inner timer is okay
-          }
-        }, duration * 0.8)
-      );
+      // progress 0..1
+      const t = Math.min(Math.max(elapsed / duration, 0), 1);
+      const left = 95 * t;
+      leftPctRef.current = left;
 
-      // 4. SCHEDULE END-OF-ANIMATION LOGIC
-      // This runs slightly after the animation finishes.
-      timersRef.current.push(
-        setTimeout(() => {
-          // Set final status based on what happened during the animation.
-          if (data.is_eve_flipped) {
-            setStatus("mismatch");
-          } else if (data.is_noise_flipped) {
-            setStatus("noise");
-          } else {
-            setStatus("match");
-          }
-        }, duration)
-      )
-
-      // Move to next bit or finish
-      if (index < obj.length - 1) {
-        timersRef.current.push(
-          setTimeout(() => {
-            setIndex((prev) => prev + 1);
-          }, duration + 1000)
-        );
-      } else {
-        timersRef.current.push(
-          setTimeout(() => {
-            setIsRunning(false);
-            let total = siftedKey.length;
-            let mismatches = siftedKey.filter((b) => !b.correct).length;
-            setQber(((mismatches / total) * 100).toFixed(2));
-
-          }, duration + 400)
-        );
+      // update DOM node directly (no React re-render)
+      if (circleRef.current) {
+        circleRef.current.style.left = `${left}%`;
       }
 
-    }
-    // --- PAUSE STATE ---
-    else if (isPaused) {
-      controls.stop(); // Freeze the animation in place.
-      cleanupTimers(); // Clear scheduled events so they don't fire while paused.
-    }
-    // --- RESET / STOPPED STATE ---
-    else {
-      controls.start({ // Animate back to the starting position.
-        left: "0%",
-        transition: { duration: 0.5 },
-      });
-      cleanupTimers(); // Clear any lingering timers.
-    }
+      // Fire EVE flip at 50%
+      if (!eveFiredRef.current && elapsed >= duration * 0.5) {
+        eveFiredRef.current = true;
+        if (data.is_eve_flipped) {
+          setCircleBit(data.after_eve.bit);
+          setCircleColor("red");
+        }
+      }
 
-    // This is React's main cleanup function. It will run when the component
-    // unmounts or before the effect runs again.
-    return cleanupTimers;
+      // Fire NOISE flip at 80%
+      if (!noiseFiredRef.current && elapsed >= duration * 0.8) {
+        noiseFiredRef.current = true;
+        if (data.is_noise_flipped) {
+          setCircleBit((prev) => (prev === 0 ? 1 : 0));
+          setCircleColor("orange");
+          setIsShocked(true);
+          shockEndAtRef.current = elapsed + duration * 0.2; // end of shock
+        }
+      }
 
-  }, [index, isRunning, isPaused, duration, obj, controls, siftedKey, eveActive]);
+      // End shock window
+      if (shockEndAtRef.current !== null && elapsed >= shockEndAtRef.current) {
+        setIsShocked(false);
+        shockEndAtRef.current = null;
+      }
 
-  // Controls
+      // Finish
+      if (!statusFiredRef.current && elapsed >= duration) {
+        statusFiredRef.current = true;
+        if (data.is_eve_flipped) setStatus("mismatch");
+        else if (data.is_noise_flipped) setStatus("noise");
+        else setStatus("match");
+
+        // Compute QBER if this was the last bit
+        if (!statusFiredRef.current && elapsed >= duration) {
+  statusFiredRef.current = true;
+
+  if (data.is_eve_flipped) setStatus("mismatch");
+  else if (data.is_noise_flipped) setStatus("noise");
+  else setStatus("match");
+
+  if (index >= obj.length - 1) {
+    // final QBER calc...
+    const total = siftedKey.length;
+    const mismatches = siftedKey.filter((b) => b.correct !== "correct").length;
+    setQber(total ? ((mismatches / total) * 100).toFixed(2) : "0.00");
+    setIsRunning(false);
+    cancelAnimationFrame(rafRef.current);
+    return;
+  }
+        }
+  // ✅ Wait 1000ms for ripple animation before moving to next bit
+  setTimeout(() => {
+    elapsedRef.current = 0;
+    leftPctRef.current = 0;
+    setLeftPct(0);
+    setIndex((prev) => prev + 1);
+  }, 1000);
+
+  cancelAnimationFrame(rafRef.current);
+  return;
+}
+
+
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [isRunning, isPaused, index, duration, obj, siftedKey.length]);
+
+  // ===== Controls =====
   const handleStart = async () => {
     setLogs([]);
     setSiftedKey([]);
     setCorrectedKey(null);
     setShowCorrected(false);
     setIndex(0);
+
+    // Reset animation refs before starting
+    cancelAnimationFrame(rafRef.current);
+    elapsedRef.current = 0;
+    leftPctRef.current = 0;
+    setLeftPct(0);
+    eveFiredRef.current = false;
+    noiseFiredRef.current = false;
+    statusFiredRef.current = false;
+    shockEndAtRef.current = null;
+
     await fetchData();
     setIsRunning(true);
     setIsPaused(false);
@@ -258,7 +300,10 @@ export default function AnimationDiv() {
       <div className="topBar">
         <h1 className="title">BB84 Protocol Simulation</h1>
         <div className="controls">
-          <button style={{ background: "#1b9949ff", color: "white" }} onClick={handleStart}>
+          <button
+            style={{ background: "#1b9949ff", color: "white" }}
+            onClick={handleStart}
+          >
             Start
           </button>
           <button
@@ -271,7 +316,7 @@ export default function AnimationDiv() {
           <button
             style={{ background: "#3b82f6", color: "white" }}
             onClick={() => setIsPaused(false)}
-            disabled={!isPaused}
+            disabled={!isRunning || !isPaused}
           >
             Resume
           </button>
@@ -287,9 +332,9 @@ export default function AnimationDiv() {
               className="durationInput"
               type="number"
               value={duration}
-              onChange={(e) => setDuration(Number(e.target.value))}
+              onChange={(e) => setDuration(Math.max(1, Number(e.target.value)))}
               min="1"
-              step="1000"
+              step="100"
             />
           </label>
           <label className="label">
@@ -298,7 +343,9 @@ export default function AnimationDiv() {
               className="keylengthInput"
               type="number"
               value={keyLength}
-              onChange={(e) => setKeyLength(Number(e.target.value))}
+              onChange={(e) =>
+                setKeyLength(Math.max(1, Number(e.target.value)))
+              }
               min="1"
             />
           </label>
@@ -310,10 +357,10 @@ export default function AnimationDiv() {
               checked={eveActive}
               onChange={(e) => {
                 setEveActive(e.target.checked);
-                setAfterEve((afterEve === "") ? "aftereve" : "");
+                setAfterEve(afterEve === "" ? "aftereve" : "");
               }}
               disabled={isRunning}
-              style={{ cursor: (isRunning) ? "not-allowed" : "pointer" }}
+              style={{ cursor: isRunning ? "not-allowed" : "pointer" }}
             />
           </label>
           <label className="label">
@@ -340,14 +387,13 @@ export default function AnimationDiv() {
         </div>
 
         <div className={`lane ${afterEve}`}>
-
           {circleBit !== null && (
             <motion.div
+             ref={circleRef}
               className={`laneCircle ${isShocked ? "shock" : ""}`}
               key={index}
-              initial={{ left: "0%" }}
-              animate={controls}
               style={{
+                left: `${leftPct}%`,
                 backgroundColor: isShocked ? "orange" : circleColor,
               }}
             >
@@ -374,11 +420,9 @@ export default function AnimationDiv() {
           )}
 
           <div className="nodeGroup3">
-
             <Computer role="Receiver" />
             <div className="basisLabel">
               Basis: {current?.bob?.basis ?? "?"}
-
             </div>
           </div>
         </div>
@@ -401,7 +445,7 @@ export default function AnimationDiv() {
                   <th>#</th>
                   <th>Sender bit</th>
                   <th>Sender basis</th>
-                  {eveActive && (<th>Eve Basis</th>)}
+                  {eveActive && <th>Eve Basis</th>}
                   <th>Receiver basis</th>
                   <th>Receiver bit</th>
                   <th>Outcome</th>
@@ -411,9 +455,11 @@ export default function AnimationDiv() {
                 {logs.map((row, i) => (
                   <tr key={logs.length - i}>
                     <td>{logs.length - i}</td>
-                    <td><b>{row.aliceBit}</b></td>
+                    <td>
+                      <b>{row.aliceBit}</b>
+                    </td>
                     <td>{row.aliceBase}</td>
-                    {eveActive && (<td>{row.eveBase}</td>)}
+                    {eveActive && <td>{row.eveBase}</td>}
                     <td>{row.bobBase}</td>
                     <td>{row.bobBit ?? "–"}</td>
                     <td>
@@ -423,9 +469,11 @@ export default function AnimationDiv() {
                         <span className="outcome-noise">Noise</span>
                       ) : row.outcome === "Eve Flipped" ? (
                         <span className="outcome-tampered">Eve Flipped</span>
-                      ) :
-                        <span className="outcome-mismatch">Bases Mismatched</span>
-                      }
+                      ) : (
+                        <span className="outcome-mismatch">
+                          Bases Mismatched
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -447,10 +495,7 @@ export default function AnimationDiv() {
               <div className="siftedEmpty">No bits kept yet…</div>
             ) : (
               siftedKey.map((b, i) => (
-                <div
-                  key={i}
-                  className={`siftedBit ${b.correct}`}
-                >
+                <div key={i} className={`siftedBit ${b.correct}`}>
                   {b.bit}
                 </div>
               ))
@@ -468,23 +513,18 @@ export default function AnimationDiv() {
               </button>
               {showCorrected && (
                 <div>
-                  <br></br>
+                  <br />
                   <div className="siftedContainer">
-                      {correctedKey.map(b => 
-                        <div
-                          key={b}
-                          className={`siftedBit correct`}
-                        >
-                          {b}
-                        </div>
-                      )
-                      }
+                    {correctedKey.map((b, idx) => (
+                      <div key={`${b}-${idx}`} className={`siftedBit correct`}>
+                        {b}
+                      </div>
+                    ))}
                   </div>
                   <div className="correctedKeyDisplay">
                     Corrected Key: {correctedKey.join("")}
                   </div>
                 </div>
-
               )}
             </>
           )}
@@ -498,7 +538,3 @@ export default function AnimationDiv() {
     </div>
   );
 }
-
-
-
-
