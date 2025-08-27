@@ -1,4 +1,7 @@
-
+import CryptoJS from "crypto-js";
+import startIcon from "../images/start.png";
+import pauseIcon from "../images/pause.png";
+import resumeIcon from "../images/resume.png";
 import React, { useState, useEffect, useRef } from "react";
 import "./styles.css";
 import { motion } from "framer-motion";
@@ -8,7 +11,8 @@ import horizontal from "../images/0.png";
 import vertical from "../images/90.png";
 import zero from "../images/45.png";
 import one from "../images/135.png";
-
+import fastForwradIcon from "../images/fast-forward.png";
+import resetIcon from "../images/undo-arrow.png";
 // Utility for gradient id
 const makeGradId = (role) => `grad-${role}-${Math.random()}`;
 
@@ -59,11 +63,15 @@ const Computer = ({ role = "Sender", color = "default", current_basis }) => {
           alignItems: "center",
         }}
       >
-        {current_basis
-          ? (current_basis === "Z"
-            ? <img src={plusSign} alt="plus sign" width="30" height="30" />
-            : <img src={cancelSign} alt="cancel sign" width="30" height="30" />)
-          : "?"}
+        {current_basis ? (
+          current_basis === "Z" ? (
+            <img src={plusSign} alt="plus sign" width="30" height="30" />
+          ) : (
+            <img src={cancelSign} alt="cancel sign" width="30" height="30" />
+          )
+        ) : (
+          "?"
+        )}
       </div>
 
       {/* Role label */}
@@ -72,24 +80,114 @@ const Computer = ({ role = "Sender", color = "default", current_basis }) => {
   );
 };
 
-
-
 export default function AnimationDiv() {
   const [index, setIndex] = useState(0);
+  const indexRef = useRef(0);
+
   const [logs, setLogs] = useState([]);
   const [qber, setQber] = useState(null);
+  const [qberRef] = useState({ current: null });
+
   const [siftedKey, setSiftedKey] = useState([]);
+  const siftedKeyRef = useRef([]);
+  useEffect(() => {
+    siftedKeyRef.current = siftedKey;
+  }, [siftedKey]);
+
   const [correctedKey, setCorrectedKey] = useState(null);
   const [showCorrected, setShowCorrected] = useState(false);
 
   const [duration, setDuration] = useState(2400); // ms
+  const durationRef = useRef(duration);
+  useEffect(() => {
+    durationRef.current = Math.max(1, Number(duration));
+  }, [duration]);
+
   const [circleBit, setCircleBit] = useState(null);
   const [circleBasis, setCircleBasis] = useState(null);
   const [circleColor, setCircleColor] = useState("rgb(119,56,236)");
   const [isShocked, setIsShocked] = useState(false);
 
+  const [senderMessage, setSenderMessage] = useState("");
+  const [encryptedMessage, setEncryptedMessage] = useState("");
+  const [receiverMessage, setReceiverMessage] = useState("");
+  const [decryptedMessage, setDecryptedMessage] = useState("");
+  const [encryptionMethod, setEncryptionMethod] = useState("XOR");
+
+  // only Receiver key is editable
+  const [receiverKey, setReceiverKey] = useState("");
+  const senderKey = siftedKey.map((b) => b.bit).join(""); // from simulation
+
+  // ===== Helpers for encryption =====
+  const getKeyString = () => siftedKey.map((b) => b.bit).join("") || "0";
+
+  const xorEncryptDecrypt = (text, keyBits) => {
+    if (!keyBits) return text;
+    let result = "";
+    for (let i = 0; i < text.length; i++) {
+      const charCode = text.charCodeAt(i);
+      const keyBit = parseInt(keyBits[i % keyBits.length]);
+      result += String.fromCharCode(charCode ^ keyBit);
+    }
+    return result;
+  };
+
+  const aesEncrypt = (text, keyBits) => {
+    const key = CryptoJS.SHA256(keyBits).toString().slice(0, 32);
+    return CryptoJS.AES.encrypt(text, key).toString();
+  };
+
+  const aesDecrypt = (cipher, keyBits) => {
+    try {
+      const key = CryptoJS.SHA256(keyBits).toString().slice(0, 32);
+      const bytes = CryptoJS.AES.decrypt(cipher, key);
+      return bytes.toString(CryptoJS.enc.Utf8); // empty string if wrong key
+    } catch {
+      return "";
+    }
+  };
+
+  const handleEncrypt = () => {
+    if (!senderKey) {
+      setEncryptedMessage("⚠️ No sifted key from simulation");
+      return;
+    }
+    if (encryptionMethod === "XOR") {
+      setEncryptedMessage(btoa(xorEncryptDecrypt(senderMessage, senderKey)));
+    } else {
+      setEncryptedMessage(aesEncrypt(senderMessage, senderKey));
+    }
+  };
+
+  const handleDecrypt = () => {
+    if (!receiverKey) {
+      setDecryptedMessage("⚠️ Please enter a sifted key");
+      return;
+    }
+    try {
+      if (encryptionMethod === "XOR") {
+        const dec = xorEncryptDecrypt(atob(receiverMessage), receiverKey);
+        setDecryptedMessage(dec);
+      } else {
+        const dec = aesDecrypt(receiverMessage, receiverKey);
+        setDecryptedMessage(dec || "⚠️ Could not decrypt");
+      }
+    } catch {
+      setDecryptedMessage("⚠️ Decryption failed");
+    }
+  };
+
   const [isRunning, setIsRunning] = useState(false);
+  const isRunningRef = useRef(false);
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+  }, [isRunning]);
+
   const [isPaused, setIsPaused] = useState(false);
+  const isPausedRef = useRef(false);
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+  }, [isPaused]);
 
   // Parameters for backend
   const [keyLength, setKeyLength] = useState(10);
@@ -100,21 +198,29 @@ export default function AnimationDiv() {
 
   // Simulation data from backend
   const [obj, setObj] = useState([]);
+  const objRef = useRef([]);
+  useEffect(() => {
+    objRef.current = obj;
+  }, [obj]);
+
   const current = obj[index] || {};
 
-  // ===== RAF-based animation state (robust pause/resume) =====
+  // Animation refs
   const rafRef = useRef(null);
-  const startTimeRef = useRef(0); // performance.now() at (re)start
-  const elapsedRef = useRef(0); // ms already elapsed within current bit
-  const leftPctRef = useRef(0); // left % (0..95)
+  const startTimeRef = useRef(0); // high-res timestamp when current anim started
+  const elapsedRef = useRef(0); // ms elapsed inside current anim
+  const leftPctRef = useRef(0);
   const [leftPct, setLeftPct] = useState(0);
 
   const eveFiredRef = useRef(false);
   const noiseFiredRef = useRef(false);
   const statusFiredRef = useRef(false);
-  const shockEndAtRef = useRef(null); // ms offset after noise to end shock
+  const shockEndAtRef = useRef(null); // absolute timestamp when shock ends
   const circleRef = useRef(null);
 
+  // Phase machine: 'idle' | 'animating' | 'waiting'
+  const phaseRef = useRef("idle");
+  const waitUntilRef = useRef(0);
 
   // ===== Backend fetch =====
   const fetchData = async () => {
@@ -127,14 +233,18 @@ export default function AnimationDiv() {
       const details = Object.values(data.log_details);
 
       setObj(details);
+      objRef.current = details;
       setQber(data.qber);
+      qberRef.current = data.qber;
       setSiftedKey([]);
+      siftedKeyRef.current = [];
       setCircleBit(details[0]?.alice?.bit ?? 0);
-      setCircleBasis(details[0]?.alice?.basis ?? '+');
+      setCircleBasis(details[0]?.alice?.basis ?? "+");
       setCorrectedKey(data.corrected_key);
 
       // Reset animation refs completely
       cancelAnimationFrame(rafRef.current);
+      startTimeRef.current = 0;
       elapsedRef.current = 0;
       leftPctRef.current = 0;
       setLeftPct(0);
@@ -142,12 +252,22 @@ export default function AnimationDiv() {
       noiseFiredRef.current = false;
       statusFiredRef.current = false;
       shockEndAtRef.current = null;
+
+      // reset phase & index
+      phaseRef.current = "idle";
+      setIndex(0);
+      indexRef.current = 0;
     } catch (err) {
       console.error("Error fetching data:", err);
     }
   };
 
-  // ===== Build log + sifted key when a new index starts =====
+  // Keep indexRef in sync whenever state index changes
+  useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
+
+  // Build log + sifted key when a new index starts
   useEffect(() => {
     if (!isRunning || obj.length === 0) return;
     if (!obj[index]) return;
@@ -158,8 +278,8 @@ export default function AnimationDiv() {
         ? data.alice.bit === data.bob.measured_bit
           ? "keep"
           : data.is_noise_flipped
-            ? "Noise"
-            : "Eve Flipped"
+          ? "Noise"
+          : "Eve Flipped"
         : "Bases Mismatched";
 
     const logRow = {
@@ -167,6 +287,7 @@ export default function AnimationDiv() {
       aliceBase: data.alice.basis,
       bobBase: data.bob.basis,
       eveBase: data.after_eve?.basis,
+      eveBit: data.after_eve?.bit,
       bobBit: data.bob.measured_bit,
       outcome,
     };
@@ -181,130 +302,283 @@ export default function AnimationDiv() {
             data.alice.bit === data.bob.measured_bit
               ? "correct"
               : data.is_eve_flipped
-                ? "wrong-eve"
-                : "wrong-noise",
+              ? "wrong-eve"
+              : "wrong-noise",
         },
       ]);
     }
   }, [index, isRunning, obj]);
 
-  // ===== Main RAF loop per bit =====
+  // Sync durationRef min threshold (>=16ms rAF frame threshold is better)
   useEffect(() => {
-    if (!isRunning || isPaused) {
-      // Paused: just stop the RAF; keep elapsedRef & leftPct so we can resume.
-      cancelAnimationFrame(rafRef.current);
-      return;
+    // keep a minimum of 1ms user-level, but effective animation uses at least 16ms
+    durationRef.current = Math.max(1, Number(duration));
+  }, [duration]);
+  // Smoothly rescale elapsed time when duration changes
+  useEffect(() => {
+    const oldDur = durationRef.current;
+    const newDur = Math.max(16, duration); // effective min
+    if (elapsedRef.current > 0 && oldDur > 0) {
+      const progress = elapsedRef.current / oldDur;
+      elapsedRef.current = progress * newDur;
+      // also shift startTime so animation continues without jump
+      startTimeRef.current = performance.now() - elapsedRef.current;
     }
+    durationRef.current = newDur;
+  }, [duration]);
 
-    if (!obj || !obj[index]) return;
+  // Main single RAF loop (reads dynamic values from refs)
+  useEffect(() => {
+    let running = false;
 
-    const data = obj[index];
-
-    // If starting a brand-new bit (not resuming mid-way)
-    if (elapsedRef.current === 0) {
-      setCircleBit(data.alice.bit);
-      setCircleBasis(data.alice.basis);
-      setCircleColor("rgb(119, 56, 236)");
-      setIsShocked(false);
-      setStatus("");
-      setLeftPct(0);
-      leftPctRef.current = 0;
-      eveFiredRef.current = false;
-      noiseFiredRef.current = false;
-      statusFiredRef.current = false;
-      shockEndAtRef.current = null;
-    }
-
-    // Start / resume clock
-    startTimeRef.current = performance.now() - elapsedRef.current;
-
-    const tick = (now) => {
-      const elapsed = now - startTimeRef.current; // ms
-      elapsedRef.current = elapsed;
-
-      // progress 0..1
-      const t = Math.min(Math.max(elapsed / duration, 0), 1);
-      const left = 95 * t;
-      leftPctRef.current = left;
-
-      // update DOM node directly (no React re-render)
-      if (circleRef.current) {
-        circleRef.current.style.left = `${left}%`;
-      }
-
-      // Fire EVE flip at 50%
-      if (!eveFiredRef.current && elapsed >= duration * 0.5) {
-        eveFiredRef.current = true;
-        if (data.is_eve_flipped) {
-          setCircleBit(data.after_eve.bit);
-          setCircleBasis(data.after_eve.basis);
-          setCircleColor("red");
-        }
-      }
-
-      // Fire NOISE flip at 80%
-      if (!noiseFiredRef.current && elapsed >= duration * 0.8) {
-        noiseFiredRef.current = true;
-        if (data.is_noise_flipped) {
-          setCircleBit((prev) => (prev === 0 ? 1 : 0));
-          //No need to change Basis as noise won't flip Basis 
-          setCircleColor("orange");
-          setIsShocked(true);
-          shockEndAtRef.current = elapsed + duration * 0.2; // end of shock
-        }
-      }
-
-      // End shock window
-      if (shockEndAtRef.current !== null && elapsed >= shockEndAtRef.current) {
-        setIsShocked(false);
-        shockEndAtRef.current = null;
-      }
-
-      // Finish
-      if (!statusFiredRef.current && elapsed >= duration) {
-        statusFiredRef.current = true;
-        if (data.is_eve_flipped) setStatus("mismatch");
-        else if (data.is_noise_flipped) setStatus("noise");
-        else setStatus("match");
-
-        // Compute QBER if this was the last bit
-        if (!statusFiredRef.current && elapsed >= duration) {
-          statusFiredRef.current = true;
-
-          if (data.is_eve_flipped) setStatus("mismatch");
-          else if (data.is_noise_flipped) setStatus("noise");
-          else setStatus("match");
-
-          if (index >= obj.length - 1) {
-            // final QBER calc...
-            const total = siftedKey.length;
-            const mismatches = siftedKey.filter((b) => b.correct !== "correct").length;
-            setQber(total ? ((mismatches / total) * 100).toFixed(2) : "0.00");
-            setIsRunning(false);
-            cancelAnimationFrame(rafRef.current);
-            return;
-          }
-        }
-        // ✅ Wait 1000ms for ripple animation before moving to next bit
-        setTimeout(() => {
-          elapsedRef.current = 0;
-          leftPctRef.current = 0;
-          setLeftPct(0);
-          setIndex((prev) => prev + 1);
-        }, 1000);
-
+    const loop = (now) => {
+      // Stop if not running
+      if (!isRunningRef.current) {
         cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+        phaseRef.current = "idle";
+        startTimeRef.current = 0;
+        elapsedRef.current = 0;
         return;
       }
 
+      // If paused, keep scheduling but don't advance timelines
+      if (isPausedRef.current) {
+        // reset startTime so animation resumes cleanly
+        startTimeRef.current = 0;
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
 
-      rafRef.current = requestAnimationFrame(tick);
+      // get effective duration (cap at at least 16ms to match rAF)
+      const effectiveDuration = Math.max(16, durationRef.current);
+
+      // Ensure we have data
+      const list = objRef.current;
+      const idx = indexRef.current;
+      const data = list[idx];
+      if (!data) {
+        // nothing more to play — stop gracefully
+        setIsRunning(false);
+        rafRef.current = null;
+        phaseRef.current = "idle";
+        return;
+      }
+
+      if (phaseRef.current === "idle") {
+        // Initialize a new bit animation
+        phaseRef.current = "animating";
+        startTimeRef.current = 0;
+        elapsedRef.current = 0;
+        leftPctRef.current = 0;
+        setLeftPct(0);
+
+        // reset flags
+        eveFiredRef.current = false;
+        noiseFiredRef.current = false;
+        statusFiredRef.current = false;
+        shockEndAtRef.current = null;
+
+        // set circle visuals to alice's starting state
+        setCircleBit(data.alice.bit);
+        setCircleBasis(data.alice.basis);
+        setCircleColor("rgb(119,56,236)");
+        setIsShocked(false);
+      }
+
+      if (phaseRef.current === "animating") {
+        if (startTimeRef.current === 0)
+          startTimeRef.current = now - elapsedRef.current;
+        const elapsed = now - startTimeRef.current;
+        elapsedRef.current = elapsed;
+
+        // progress 0..1
+        const t = Math.min(elapsed / effectiveDuration, 1);
+        const left = 95 * t;
+        leftPctRef.current = left;
+        // update UI (we set both style and state to make sure it's smooth)
+        if (circleRef.current) {
+          circleRef.current.style.left = `${left}%`;
+        }
+        setLeftPct(left);
+
+        // Eve at 50%
+        if (!eveFiredRef.current && elapsed >= effectiveDuration * 0.5) {
+          eveFiredRef.current = true;
+          if (data.is_eve_flipped && data.after_eve) {
+            setCircleBit(data.after_eve.bit);
+            setCircleBasis(data.after_eve.basis);
+            setCircleColor("red");
+          }
+        }
+
+        // Noise at 80%
+        if (!noiseFiredRef.current && elapsed >= effectiveDuration * 0.8) {
+          noiseFiredRef.current = true;
+          if (data.is_noise_flipped) {
+            setCircleBit((prev) => (prev === 0 ? 1 : 0));
+            setCircleColor("orange");
+            setIsShocked(true);
+            // set shock end to elapsed + 20% of effectiveDuration
+            shockEndAtRef.current = now + effectiveDuration * 0.2;
+          }
+        }
+
+        // End shock based on absolute timestamp
+        if (shockEndAtRef.current !== null && now >= shockEndAtRef.current) {
+          setIsShocked(false);
+          shockEndAtRef.current = null;
+        }
+
+        // Finish this bit
+        if (!statusFiredRef.current && elapsed >= effectiveDuration) {
+          statusFiredRef.current = true;
+          // set status
+          if (data.alice.bit === data.bob.measured_bit) setStatus("match");
+          else setStatus("mismatch");
+
+          // If last bit, compute QBER and stop after the required wait
+          const isLast = idx >= list.length - 1;
+          if (isLast) {
+            const total = siftedKeyRef.current.length;
+            const mismatches = siftedKeyRef.current.filter(
+              (b) => b.correct !== "correct"
+            ).length;
+            const q = total ? ((mismatches / total) * 100).toFixed(2) : "0.00";
+            setQber(q);
+            qberRef.current = q;
+            // wait at least 1s so user sees final status, then stop
+            phaseRef.current = "waiting";
+            waitUntilRef.current =
+              now + Math.max(1000, effectiveDuration * 0.3);
+          } else {
+            // Normal: show result then wait before next bit
+            phaseRef.current = "waiting";
+            // <-- IMPORTANT: ensure next bit start after at least 1000ms so user sees green/red/orange -->
+            waitUntilRef.current =
+              now + Math.max(1000, effectiveDuration * 0.3);
+          }
+        }
+      } else if (phaseRef.current === "waiting") {
+        if (now >= waitUntilRef.current) {
+          // move to next bit
+          // Reset per-bit timing
+          startTimeRef.current = 0;
+          elapsedRef.current = 0;
+          leftPctRef.current = 0;
+          setLeftPct(0);
+
+          // move index (update both state and ref)
+          const next = indexRef.current + 1;
+          setIndex(next);
+          indexRef.current = next;
+
+          // reset flags for next bit
+          eveFiredRef.current = false;
+          noiseFiredRef.current = false;
+          statusFiredRef.current = false;
+          shockEndAtRef.current = null;
+          setIsShocked(false);
+          setStatus(""); // clear status for next animation
+
+          // start animating new bit on next tick
+          phaseRef.current = "animating";
+          startTimeRef.current = 0;
+          elapsedRef.current = 0;
+        }
+      }
+
+      rafRef.current = requestAnimationFrame(loop);
     };
 
-    rafRef.current = requestAnimationFrame(tick);
+    // Start loop when running toggles on
+    if (isRunning) {
+      running = true;
+      rafRef.current = requestAnimationFrame(loop);
+    }
 
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [isRunning, isPaused, index, duration, obj, siftedKey.length]);
+    // Cleanup
+    return () => {
+      running = false;
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [isRunning]); // only start/stop the loop when isRunning toggles
+  const handleFastForward = () => {
+    const list = objRef.current;
+    if (!list || list.length === 0) return;
+
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    isRunningRef.current = false;
+    setIsRunning(false);
+
+    // Clear old state
+    setLogs([]);
+    setSiftedKey([]);
+    const logsArr = [];
+    const siftedArr = [];
+
+    // Process all bits instantly
+    for (let i = 0; i < list.length; i++) {
+      const data = list[i];
+      const outcome =
+        data.alice.basis === data.bob.basis
+          ? data.alice.bit === data.bob.measured_bit
+            ? "keep"
+            : data.is_noise_flipped
+            ? "Noise"
+            : "Eve Flipped"
+          : "Bases Mismatched";
+
+      logsArr.unshift({
+        aliceBit: data.alice.bit,
+        aliceBase: data.alice.basis,
+        eveBase: data.after_eve?.basis,
+        eveBit: data.after_eve?.bit,
+        bobBase: data.bob.basis,
+        bobBit: data.bob.measured_bit,
+        outcome,
+      });
+
+      if (outcome !== "Bases Mismatched") {
+        siftedArr.push({
+          bit: data.bob.measured_bit,
+          correct:
+            data.alice.bit === data.bob.measured_bit
+              ? "correct"
+              : data.is_eve_flipped
+              ? "wrong-eve"
+              : "wrong-noise",
+        });
+      }
+    }
+
+    setLogs(logsArr);
+    setSiftedKey(siftedArr);
+
+    // Set QBER
+    const total = siftedArr.length;
+    const mismatches = siftedArr.filter((b) => b.correct !== "correct").length;
+    const q = total ? ((mismatches / total) * 100).toFixed(2) : "0.00";
+    setQber(q);
+    qberRef.current = q;
+
+    // Jump circle to final state
+    const last = list[list.length - 1];
+    setCircleBit(last.alice.bit);
+    setCircleBasis(last.alice.basis);
+    setCircleColor("rgb(119,56,236)");
+    setLeftPct(95); // move to end
+    setStatus(""); // optional: clear match/mismatch color
+    setIsShocked(false);
+
+    // Allow showing corrected key
+    setCorrectedKey((prev) => prev ?? null);
+    setShowCorrected(false);
+  };
 
   // ===== Controls =====
   const handleStart = async () => {
@@ -312,10 +586,10 @@ export default function AnimationDiv() {
     setSiftedKey([]);
     setCorrectedKey(null);
     setShowCorrected(false);
-    setIndex(0);
 
-    // Reset animation refs before starting
+    // Reset UI/ref state
     cancelAnimationFrame(rafRef.current);
+    startTimeRef.current = 0;
     elapsedRef.current = 0;
     leftPctRef.current = 0;
     setLeftPct(0);
@@ -323,53 +597,91 @@ export default function AnimationDiv() {
     noiseFiredRef.current = false;
     statusFiredRef.current = false;
     shockEndAtRef.current = null;
+    phaseRef.current = "idle";
+
+    setIndex(0);
+    indexRef.current = 0;
 
     await fetchData();
-    setIsRunning(true);
+
+    // start
     setIsPaused(false);
+    isPausedRef.current = false;
+    setIsRunning(true);
+    isRunningRef.current = true;
+  };
+
+  // Pause / Resume handlers update both state and refs
+  const handlePause = () => {
+    setIsPaused(true);
+    isPausedRef.current = true;
+  };
+  const handleResume = () => {
+    setIsPaused(false);
+    isPausedRef.current = false;
   };
 
   return (
     <div className="pageWrapper">
       {/* Controls */}
       <div className="topBar">
-        <h1 className="title">BB84 Protocol Simulation</h1>
+        <h1 className="title">Controls</h1>
         <div className="controls">
           <button
-            style={{ background: "#1b9949ff", color: "white" }}
+            className="startBtn"
             onClick={handleStart}
+            disabled={isRunning}
           >
-            Start
+            <span>Start</span>
+            <img src={startIcon} alt="Start" />
           </button>
+
           <button
-            style={{ background: "#facc15" }}
-            onClick={() => setIsPaused(true)}
+            className="pauseBtn"
+            onClick={handlePause}
             disabled={!isRunning || isPaused}
           >
-            Pause
+            <span>Pause</span>
+            <img src={pauseIcon} alt="Pause" />
           </button>
+
           <button
-            style={{ background: "#3b82f6", color: "white" }}
-            onClick={() => setIsPaused(false)}
+            className="resumeBtn"
+            onClick={handleResume}
             disabled={!isRunning || !isPaused}
           >
-            Resume
+            <span>Resume</span>
+            <img src={resumeIcon} alt="Resume" />
           </button>
+
+          <button className="resetBtn" onClick={() => window.location.reload()}>
+            <span>Reset</span>
+            <img src={resetIcon} alt="Reset" />
+          </button>
+
           <button
-            style={{ background: "#ef4444", color: "white" }}
-            onClick={() => window.location.reload()}
+            className="fastForwardBtn"
+            onClick={handleFastForward}
+            disabled={!isRunning}
           >
-            Reset
+            <span>Fast Forward</span>
+            <img src={fastForwradIcon} alt="Fast Forward" />
           </button>
+
           <label className="label">
             Duration (ms):
             <input
               className="durationInput"
               type="number"
               value={duration}
-              onChange={(e) => setDuration(Math.max(1, Number(e.target.value)))}
+              onChange={(e) => {
+                // accept user small values, but effective duration uses at least 16ms.
+                const v = Number(e.target.value) || 1;
+                setDuration(v);
+                durationRef.current = v;
+              }}
               min="1"
-              step="100"
+              step="1"
             />
           </label>
           <label className="label">
@@ -432,17 +744,22 @@ export default function AnimationDiv() {
                 backgroundColor: isShocked ? "orange" : circleColor,
               }}
             >
-              {circleBasis == 'Z'
-                ? (circleBit == 0
-                  ? <img src={horizontal} alt="plus sign" width="40" height="40" />
-                  : <img src={vertical} alt="plus sign" width="40" height="40" />
+              {circleBasis == "Z" ? (
+                circleBit == 0 ? (
+                  <img
+                    src={horizontal}
+                    alt="plus sign"
+                    width="40"
+                    height="40"
+                  />
+                ) : (
+                  <img src={vertical} alt="plus sign" width="40" height="40" />
                 )
-                : (circleBit == 0
-                  ? <img src={zero} alt="plus sign" width="40" height="40" />
-                  : <img src={one} alt="plus sign" width="40" height="40" />
-                )
-              }
-
+              ) : circleBit == 0 ? (
+                <img src={zero} alt="plus sign" width="40" height="40" />
+              ) : (
+                <img src={one} alt="plus sign" width="40" height="40" />
+              )}
             </motion.div>
           )}
         </div>
@@ -451,38 +768,83 @@ export default function AnimationDiv() {
         <div className="nodePanel">
           <div className="nodeGroup1">
             <Computer role="Sender" current_basis={current?.alice?.basis} />
-            <div className="basisLabel" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <div
+              className="basisLabel"
+              style={{ display: "flex", alignItems: "center", gap: "6px" }}
+            >
               <span>Basis:</span>
-              {current?.alice?.basis
-                ? (current.alice.basis === "Z"
-                  ? <img src={plusSign} alt="plus sign" width="40" height="40" />
-                  : <img src={cancelSign} alt="cancel sign" width="40" height="40" />)
-                : "?"}
+              {current?.alice?.basis ? (
+                current.alice.basis === "Z" ? (
+                  <img src={plusSign} alt="plus sign" width="40" height="40" />
+                ) : (
+                  <img
+                    src={cancelSign}
+                    alt="cancel sign"
+                    width="40"
+                    height="40"
+                  />
+                )
+              ) : (
+                "?"
+              )}
             </div>
           </div>
           {eveActive && (
             <div className="nodeGroup2">
-              <Computer role="Eve" color="red" current_basis = {current?.after_eve?.basis} />
-              <div className="basisLabel" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <span>Basis:</span>
-              {current?.after_eve?.basis
-                ? (current.after_eve.basis === "Z"
-                  ? <img src={plusSign} alt="plus sign" width="40" height="40" />
-                  : <img src={cancelSign} alt="cancel sign" width="40" height="40" />)
-                : "?"}
-            </div>
+              <Computer
+                role="Eve"
+                color="red"
+                current_basis={current?.after_eve?.basis}
+              />
+              <div
+                className="basisLabel"
+                style={{ display: "flex", alignItems: "center", gap: "6px" }}
+              >
+                <span>Basis:</span>
+                {current?.after_eve?.basis ? (
+                  current.after_eve.basis === "Z" ? (
+                    <img
+                      src={plusSign}
+                      alt="plus sign"
+                      width="40"
+                      height="40"
+                    />
+                  ) : (
+                    <img
+                      src={cancelSign}
+                      alt="cancel sign"
+                      width="40"
+                      height="40"
+                    />
+                  )
+                ) : (
+                  "?"
+                )}
+              </div>
             </div>
           )}
 
           <div className="nodeGroup3">
             <Computer role="Receiver" current_basis={current?.bob?.basis} />
-            <div className="basisLabel" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <div
+              className="basisLabel"
+              style={{ display: "flex", alignItems: "center", gap: "6px" }}
+            >
               <span>Basis:</span>
-              {current?.bob?.basis
-                ? (current.bob.basis === "Z"
-                  ? <img src={plusSign} alt="plus sign" width="40" height="40" />
-                  : <img src={cancelSign} alt="cancel sign" width="40" height="40" />)
-                : "?"}
+              {current?.bob?.basis ? (
+                current.bob.basis === "Z" ? (
+                  <img src={plusSign} alt="plus sign" width="40" height="40" />
+                ) : (
+                  <img
+                    src={cancelSign}
+                    alt="cancel sign"
+                    width="40"
+                    height="40"
+                  />
+                )
+              ) : (
+                "?"
+              )}
             </div>
           </div>
         </div>
@@ -506,6 +868,7 @@ export default function AnimationDiv() {
                   <th>Sender bit</th>
                   <th>Sender basis</th>
                   {eveActive && <th>Eve Basis</th>}
+                  {eveActive && <th>Eve Bit</th>}
                   <th>Receiver basis</th>
                   <th>Receiver bit</th>
                   <th>Outcome</th>
@@ -520,6 +883,16 @@ export default function AnimationDiv() {
                     </td>
                     <td>{row.aliceBase}</td>
                     {eveActive && <td>{row.eveBase}</td>}
+                    {console.log(row.eveBit)}
+                    {eveActive && (
+                      <td
+                        style={{
+                          color: row.aliceBit == row.eveBit ? "black" : "red",
+                        }}
+                      >
+                        {row.eveBit}
+                      </td>
+                    )}
                     <td>{row.bobBase}</td>
                     <td>{row.bobBit ?? "–"}</td>
                     <td>
@@ -592,6 +965,83 @@ export default function AnimationDiv() {
           <div className="siftedNote">
             QBER is shown after animation finishes. Corrected key is only
             available when errors are from noise (not Eve).
+          </div>
+        </div>
+      </div>
+      <div className="outerstyling">
+        <div className="secureMessaging">
+          <div className="centre">
+            <h2 className="title">Secure Messaging Demo</h2>
+
+            <div className="methodSelect">
+              <label className="methodLabel">Encryption Method</label>
+              <select
+                className="methodDropdown"
+                value={encryptionMethod}
+                onChange={(e) => setEncryptionMethod(e.target.value)}
+              >
+                <option value="XOR">XOR</option>
+                <option value="AES">AES</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="securePanel">
+            {/* Sender */}
+            <div className="card secureCard">
+              <div className="cardHeader">
+                <div className="title">Sender</div>
+              </div>
+              <textarea
+                placeholder="Enter message"
+                value={senderMessage}
+                onChange={(e) => setSenderMessage(e.target.value)}
+              />
+              <div className="siftedKeyBox">
+                <b>Sifted Key (From Simulation):</b>
+                <div className="siftedKeyValue">
+                  {senderKey || "No key generated yet"}
+                </div>
+              </div>
+              <button onClick={handleEncrypt}>Encrypt</button>
+              <div className="outputBlock">
+                <b>Encrypted Data:</b>
+                <textarea readOnly value={encryptedMessage} />
+                <button
+                  onClick={() =>
+                    navigator.clipboard.writeText(encryptedMessage)
+                  }
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+
+            {/* Receiver */}
+            <div className="card secureCard">
+              <div className="cardHeader">
+                <div className="title">Receiver</div>
+              </div>
+              <textarea
+                placeholder="Paste encrypted message"
+                value={receiverMessage}
+                onChange={(e) => setReceiverMessage(e.target.value)}
+              />
+              <div className="siftedKeyBox">
+                <b>Sifted Key (Editable):</b>
+                <input
+                  type="text"
+                  value={receiverKey}
+                  onChange={(e) => setReceiverKey(e.target.value)}
+                  placeholder="Enter sifted key"
+                />
+              </div>
+              <button onClick={handleDecrypt}>Decrypt</button>
+              <div className="outputBlock">
+                <b>Decrypted Data:</b>
+                <textarea readOnly value={decryptedMessage} />
+              </div>
+            </div>
           </div>
         </div>
       </div>
